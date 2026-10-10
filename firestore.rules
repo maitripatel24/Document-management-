@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function isActive() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && me().active == true;
+    }
+    function isAdmin() {
+      return isActive() && me().role == 'admin';
+    }
+    function setupDone() {
+      return exists(/databases/$(database)/documents/meta/setup);
+    }
+
+    // One-time marker that the first admin was created.
+    match /meta/setup {
+      allow read: if true;
+      allow create: if request.auth != null
+        && !setupDone()
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isActive());
+      // Admins add users. The very first user may make themselves admin, only during setup.
+      allow create: if isAdmin()
+        || (request.auth != null && request.auth.uid == uid
+            && !setupDone()
+            && existsAfter(/databases/$(database)/documents/meta/setup)
+            && request.resource.data.role == 'admin');
+      // Admins manage roles/access, but not their own (prevents locking everyone out).
+      allow update: if isAdmin() && request.auth.uid != uid;
+      allow delete: if false;
+    }
+
+    match /documents/{docId} {
+      allow read: if isActive();
+      allow create: if isActive() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin()
+        || (isActive() && resource.data.createdBy == request.auth.uid
+            && request.resource.data.createdBy == resource.data.createdBy);
+      allow delete: if isAdmin() || (isActive() && resource.data.createdBy == request.auth.uid);
+    }
+  }
+}

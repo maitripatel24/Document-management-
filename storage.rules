@@ -1,0 +1,22 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function profile() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+    function isActive() {
+      return request.auth != null && profile().active == true;
+    }
+    function isAdmin() {
+      return isActive() && profile().role == 'admin';
+    }
+
+    // Files live under documents/<uploader uid>/...
+    match /documents/{uid}/{fileName} {
+      allow read: if isActive();
+      allow create: if isActive() && request.auth.uid == uid && request.resource.size < 50 * 1024 * 1024;
+      allow delete: if isAdmin() || (isActive() && request.auth.uid == uid);
+    }
+  }
+}
